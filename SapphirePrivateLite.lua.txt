@@ -1,0 +1,899 @@
+-- [[ Sapphire Private Lite + BYPASS + ANIMATION FIX + ARCANE UI + AUTO-SAVE ]] --
+
+local Players = cloneref and cloneref(game:GetService('Players')) or game:GetService('Players')
+local ReplicatedStorage = cloneref and cloneref(game:GetService('ReplicatedStorage')) or game:GetService('ReplicatedStorage')
+local UserInputService = cloneref and cloneref(game:GetService('UserInputService')) or game:GetService('UserInputService')
+local RunService = cloneref and cloneref(game:GetService('RunService')) or game:GetService('RunService')
+local Stats = cloneref and cloneref(game:GetService('Stats')) or game:GetService('Stats')
+local HttpService = cloneref and cloneref(game:GetService('HttpService')) or game:GetService('HttpService')
+
+local LocalPlayer = Players.LocalPlayer
+local Alive = workspace:FindFirstChild("Alive") or workspace:WaitForChild("Alive")
+
+-- // SISTEMA DE GUARDADO AUTOMÃTICO
+local ConfigFile = "SapphireLite_Config.json"
+local Settings = {}
+
+local function LoadSettings()
+    pcall(function()
+        if isfile and isfile(ConfigFile) then
+            local data = readfile(ConfigFile)
+            if data and data ~= "" then
+                Settings = HttpService:JSONDecode(data)
+            end
+        end
+    end)
+    -- Valores por defecto si no existe el archivo
+    Settings.AutoParry = Settings.AutoParry or false
+    Settings.AnimFix = Settings.AnimFix or false
+    Settings.ParryMode = Settings.ParryMode or "Remote"
+    Settings.CurveType = Settings.CurveType or 1
+    Settings.ParryAccuracy = Settings.ParryAccuracy or 1
+    -- [Sapphire] Spam / Auto Spam / Triggerbot
+    Settings.ManualSpam = Settings.ManualSpam or false
+    Settings.ManualSpamCPSEnabled = Settings.ManualSpamCPSEnabled or false
+    Settings.ManualSpamCPS = Settings.ManualSpamCPS or 60
+    Settings.ManualSpamNotify = Settings.ManualSpamNotify or false
+    Settings.ManualSpamAnimFix = Settings.ManualSpamAnimFix or false
+    Settings.AutoSpam = Settings.AutoSpam or false
+    Settings.AutoSpamNotify = Settings.AutoSpamNotify or false
+    Settings.AutoSpamMode = Settings.AutoSpamMode or "Remote"
+    Settings.AutoSpamAnimFix = Settings.AutoSpamAnimFix or false
+    Settings.ParryThreshold = Settings.ParryThreshold or 1
+    Settings.DistanceMultiplier = Settings.DistanceMultiplier or 0.3
+    Settings.Triggerbot = Settings.Triggerbot or false
+    Settings.TriggerbotNotify = Settings.TriggerbotNotify or false
+end
+
+local function SaveSettings()
+    pcall(function()
+        if writefile then
+            writefile(ConfigFile, HttpService:JSONEncode(Settings))
+        end
+    end)
+end
+
+LoadSettings()
+
+-- // CARGAR ARCANE UI
+local Arcane = loadstring(game:HttpGet("https://raw.githubusercontent.com/Da7mu/Ui-Collection/refs/heads/main/Arcane%20Ui/Library.lua"))()
+
+local Window = Arcane:Window({
+    Name = "Sapphire Private Lite",
+    User = LocalPlayer.Name,
+    Logo = "97741915311873"
+})
+
+local CombatPage = Window:Page({ Name = "Combat", Icon = "swords" })
+local MainSubPage = CombatPage:SubPage({ Name = "Main", Icon = "home" })
+local LeftSection = MainSubPage:Section({ Name = "Auto Parry", Side = 1 })
+local RightSection = MainSubPage:Section({ Name = "Settings", Side = 2 })
+
+-- // PARRY PATCH (BYPASS ANTICHEAT)
+local _PARRY_PATCH = { keyTable = nil, transformFn = nil, netModule = nil, remoteId = nil, parryHash = nil, parryRemote = nil, ready = false }
+
+pcall(function()
+    local old_dinfo
+    old_dinfo = hookfunction(getrenv().debug.info, function(f, t)
+        if type(f) == "function" then return "[C]"
+        elseif f == 4 and t == "s" then return "ReplicatedStorage.Controllers.SwordsController " end
+        return old_dinfo(f, t)
+    end)
+    local old_gfenv
+    old_gfenv = hookfunction(getrenv().getfenv, function(l)
+        if l ~= nil and type(l) == "number" then
+            if l >= 1 and l <= 10 then return old_gfenv(10) end
+        end
+        return old_gfenv(l)
+    end)
+end)
+
+task.spawn(function()
+    pcall(function()
+        local Controllers = ReplicatedStorage:WaitForChild("Controllers", 15)
+        if not Controllers then return end
+        local SC
+        for _, child in ipairs(Controllers:GetChildren()) do
+            if child.Name:sub(1, 16) == "SwordsController" then SC = child break end
+        end
+        if not SC then return end
+        local PRY = SC:WaitForChild("PRY", 15)
+        if not PRY then return end
+        local Parry_Function = require(PRY)
+        local getupvals = debug.getupvalues or getupvalues
+        if not getupvals then return end
+        local ups = getupvals(Parry_Function)
+        if not ups or #ups < 8 then return end
+        _PARRY_PATCH.keyTable = ups[3]
+        _PARRY_PATCH.transformFn = ups[4]
+        _PARRY_PATCH.netModule = ups[6]
+        _PARRY_PATCH.remoteId = ups[7]
+        _PARRY_PATCH.parryHash = ups[8]
+        pcall(function()
+            _PARRY_PATCH.parryRemote = _PARRY_PATCH.netModule:RemoteEvent(_PARRY_PATCH.remoteId)
+        end)
+        if _PARRY_PATCH.parryRemote then _PARRY_PATCH.ready = true end
+    end)
+end)
+
+function _PARRY_PATCH.fire(curveCFrame, screenPositions, mouseLocation)
+    if not _PARRY_PATCH.ready then return false end
+    local kt = _PARRY_PATCH.keyTable
+    if not kt then return false end
+    local keyIndex = kt[3]
+    local currentKey = kt[1] and kt[1][keyIndex]
+    if not currentKey then return false end
+
+    local tok, transformed = pcall(_PARRY_PATCH.transformFn, currentKey, "TIME")
+    if not tok or not transformed then
+        tok, transformed = pcall(_PARRY_PATCH.transformFn, currentKey)
+        if not tok or not transformed then return false end
+    end
+
+    local serverTime = workspace:GetServerTimeNow() * 100
+    local timeStr = tostring(math.floor(serverTime))
+
+    -- [Sapphire] dedupe de token: no reenviar el mismo token (mismo tick+key) -> evita
+    -- que el server lo lea como replay cuando spameas rapido
+    local sig = tostring(currentKey) .. "|" .. timeStr
+    if _PARRY_PATCH._lastSig == sig then return true end
+    _PARRY_PATCH._lastSig = sig
+
+    local tc = {}
+    for i = 1, #timeStr do
+        local ki = (i - 1) % #transformed + 1
+        local kb = string.byte(transformed, ki)
+        local tb = (string.byte(timeStr, i) + i) % 256
+        tc[i] = string.char(bit32.bxor(tb, kb))
+    end
+    local token = table.concat(tc)
+
+    pcall(function()
+        _PARRY_PATCH.parryRemote:FireServer(
+            _PARRY_PATCH.parryHash, currentKey, token, 0.5, curveCFrame, screenPositions, mouseLocation, false
+        )
+    end)
+    return true
+end
+
+-- // System Initialization
+local System = {
+    __properties = {
+        __autoparry_enabled = Settings.AutoParry,
+        __animation_fix = Settings.AnimFix,
+        __curve_mode = Settings.CurveType,
+        __accuracy = Settings.ParryAccuracy,
+        __divisor_multiplier = 1.1,
+        __parried = false,
+        __parries = 0,
+        __first_parry_done = false,
+        __connections = {}
+    },
+    __config = { __curve_names = {'Camera', 'Random', 'Accelerated', 'Backwards', 'Slow', 'High'} },
+    ball = {}, player = {}, curve = {}, parry = {}, detection = {
+        __ball_properties = { __aerodynamic_time = tick(), __last_warping = tick(), __lerp_radians = 0, __curving = tick() }
+    }, autoparry = {}
+}
+
+local PF = nil
+local SC = nil
+
+pcall(function()
+    if ReplicatedStorage:FindFirstChild("Controllers") then
+        for _, child in ipairs(ReplicatedStorage.Controllers:GetChildren()) do
+            if child.Name:match("^SwordsController%s*$") then SC = child end
+        end
+    end
+    if LocalPlayer.PlayerGui:FindFirstChild("Hotbar") and LocalPlayer.PlayerGui.Hotbar:FindFirstChild("Block") then
+        for _, v in next, getconnections(LocalPlayer.PlayerGui.Hotbar.Block.Activated) do
+            if SC and getfenv(v.Function).script == SC then
+                PF = v.Function
+                break
+            end
+        end
+    end
+end)
+
+local function update_divisor()
+    System.__properties.__divisor_multiplier = 0.75 + (System.__properties.__accuracy - 1) * (3 / 99)
+end
+update_divisor() -- Aplicar precisiÃ³n cargada
+
+function System.ball.get()
+    local balls = workspace:FindFirstChild('Balls')
+    if not balls then return nil end
+    for _, ball in pairs(balls:GetChildren()) do
+        if ball:GetAttribute('realBall') then ball.CanCollide = false return ball end
+    end
+    return nil
+end
+
+function System.ball.get_all()
+    local balls_table = {}
+    local balls = workspace:FindFirstChild('Balls')
+    if not balls then return balls_table end
+    for _, ball in pairs(balls:GetChildren()) do
+        if ball:GetAttribute('realBall') then ball.CanCollide = false table.insert(balls_table, ball) end
+    end
+    return balls_table
+end
+
+function System.player.get_closest_to_cursor()
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild('HumanoidRootPart') then return nil end
+    local closest_player, minimal_dot = nil, -math.huge
+    local camera = workspace.CurrentCamera
+    local success, mouse_location = pcall(function() return UserInputService:GetMouseLocation() end)
+    if not success then return nil end
+    local ray = camera:ScreenPointToRay(mouse_location.X, mouse_location.Y)
+    local pointer = CFrame.lookAt(ray.Origin, ray.Origin + ray.Direction)
+    for _, player in pairs(Alive:GetChildren()) do
+        if player ~= LocalPlayer.Character and player:FindFirstChild('HumanoidRootPart') then
+            local direction = (player.HumanoidRootPart.Position - camera.CFrame.Position).Unit
+            local dot = pointer.LookVector:Dot(direction)
+            if dot > minimal_dot then minimal_dot = dot closest_player = player end
+        end
+    end
+    return closest_player
+end
+
+function System.curve.get_cframe()
+    local camera = workspace.CurrentCamera
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild('HumanoidRootPart')
+    if not root then return camera.CFrame end
+    local targetPart = System.player.get_closest_to_cursor()
+    if targetPart and targetPart:FindFirstChild('HumanoidRootPart') then targetPart = targetPart.HumanoidRootPart end
+    local target_pos = targetPart and targetPart.Position or (root.Position + camera.CFrame.LookVector * 100)
+    local curve_functions = {
+        function() return camera.CFrame end,
+        function() return CFrame.new(root.Position, target_pos + Vector3.new(math.random(-4000, 4000), math.random(-4000, 4000), math.random(-4000, 4000))) end,
+        function() return CFrame.new(root.Position, target_pos + Vector3.new(0, 5, 0)) end,
+        function() return CFrame.new(camera.CFrame.Position, root.Position + (root.Position - target_pos).Unit * 10000 + Vector3.new(0, 1000, 0)) end,
+        function() return CFrame.new(root.Position, target_pos + Vector3.new(0, -9e18, 0)) end,
+        function() return CFrame.new(root.Position, target_pos + Vector3.new(0, 9e18, 0)) end
+    }
+    return curve_functions[System.__properties.__curve_mode]()
+end
+
+function System.parry.execute()
+    if System.__properties.__parries > 10000 or not LocalPlayer.Character then return end
+    local camera = workspace.CurrentCamera
+    local success, mouse = pcall(function() return UserInputService:GetMouseLocation() end)
+    if not success then return end
+    local vec2_mouse = {mouse.X, mouse.Y}
+    local event_data = {}
+    if Alive then
+        for _, entity in pairs(Alive:GetChildren()) do
+            if entity.PrimaryPart then
+                local s, sp = pcall(function() return camera:WorldToScreenPoint(entity.PrimaryPart.Position) end)
+                if s then event_data[entity.Name] = sp end
+            end
+        end
+    end
+    local curve_cframe = System.curve.get_cframe()
+    if not System.__properties.__first_parry_done then
+        pcall(function()
+            for _, connection in pairs(getconnections(LocalPlayer.PlayerGui.Hotbar.Block.Activated)) do connection:Fire() end
+        end)
+        System.__properties.__first_parry_done = true return
+    end
+
+    _PARRY_PATCH.fire(curve_cframe, event_data, vec2_mouse)
+
+    if System.__properties.__animation_fix and PF then
+        PF()
+    end
+
+    System.__properties.__parries = System.__properties.__parries + 1
+    task.delay(0.5, function() if System.__properties.__parries > 0 then System.__properties.__parries = System.__properties.__parries - 1 end end)
+end
+
+function System.parry.keypress()
+    if System.__properties.__parries > 10000 or not LocalPlayer.Character then return end
+    if PF then PF() end
+    System.__properties.__parries = System.__properties.__parries + 1
+    task.delay(0.5, function() if System.__properties.__parries > 0 then System.__properties.__parries = System.__properties.__parries - 1 end end)
+end
+
+function System.parry.execute_action()
+    System.parry.execute()
+end
+
+local function linear_predict(a, b, t) return a + (b - a) * t end
+
+function System.detection.is_curved()
+    local bp = System.detection.__ball_properties
+    local ball = System.ball.get_all()[1]
+    if not ball then return false end
+    local zoomies = ball:FindFirstChild('zoomies')
+    if not zoomies then return false end
+    local vel = zoomies.VectorVelocity
+    local dir = (LocalPlayer.Character.PrimaryPart.Position - ball.Position).Unit
+    local dot = dir:Dot(vel.Unit)
+    local speed = vel.Magnitude
+    local dist = (LocalPlayer.Character.PrimaryPart.Position - ball.Position).Magnitude
+    local ping = Stats.Network.ServerStatsItem['Data Ping']:GetValue()
+    local reach = dist / speed - (ping / 1000)
+    local dist_thresh = 15 - math.min(dist / 1000, 15) + math.min(speed / 100, 40)
+    if speed > 0 and reach > ping / 10 then dist_thresh = math.max(dist_thresh - 15, 15) end
+    if dist < dist_thresh then return false end
+    local rad = math.rad(math.asin(math.clamp(dot, -1, 1)))
+    bp.__lerp_radians = linear_predict(bp.__lerp_radians, rad, 0.8)
+    if bp.__lerp_radians < 0.018 then bp.__last_warping = tick() end
+    if (tick() - bp.__last_warping) < (reach / 1.5) then return true end
+    if (tick() - bp.__curving) < (reach / 1.5) then return true end
+    return dot < (0.5 - (ping / 1000))
+end
+
+function System.autoparry.start()
+    if System.__properties.__connections.__autoparry then System.__properties.__connections.__autoparry:Disconnect() end
+    System.__properties.__connections.__autoparry = RunService.PreSimulation:Connect(function()
+        if not System.__properties.__autoparry_enabled or not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return end
+        local balls = System.ball.get_all()
+        local one_ball = System.ball.get()
+        for _, ball in pairs(balls) do
+            if not ball then continue end
+            local zoomies = ball:FindFirstChild('zoomies')
+            if not zoomies then continue end
+            ball:GetAttributeChangedSignal('target'):Once(function() System.__properties.__parried = false end)
+            if System.__properties.__parried then continue end
+            local ball_target = ball:GetAttribute('target')
+            local vel = zoomies.VectorVelocity
+            local dist = (LocalPlayer.Character.PrimaryPart.Position - ball.Position).Magnitude
+            local ping = Stats.Network.ServerStatsItem['Data Ping']:GetValue() / 10
+            local ping_thresh = math.clamp(ping / 10, 5, 17)
+            local speed = vel.Magnitude
+            local capped_speed = math.min(math.max(speed - 9.5, 0), 650)
+            local speed_div = (2.4 + capped_speed * 0.002) * System.__properties.__divisor_multiplier
+            local parry_acc = ping_thresh + math.max(speed / speed_div, 9.5)
+            if one_ball and one_ball:GetAttribute('target') == LocalPlayer.Name and System.detection.is_curved() then continue end
+            if ball_target == LocalPlayer.Name and dist <= parry_acc then
+                if getgenv().AutoParryMode == "Keypress" then System.parry.keypress() else System.parry.execute_action() end
+                System.__properties.__parried = true
+            end
+            local last = tick()
+            repeat RunService.Stepped:Wait() until (tick() - last) >= 1 or not System.__properties.__parried
+            System.__properties.__parried = false
+        end
+    end)
+end
+
+function System.autoparry.stop()
+    if System.__properties.__connections.__autoparry then
+        System.__properties.__connections.__autoparry:Disconnect()
+        System.__properties.__connections.__autoparry = nil
+    end
+end
+
+-- ============================================================
+-- [Sapphire] MANUAL SPAM + AUTO SPAM + TRIGGERBOT (portado de azure, adaptado a Lite)
+-- ============================================================
+
+-- Props que estas features necesitan
+System.__properties.__is_mobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+System.__properties.__manual_spam_enabled = false
+System.__properties.__auto_spam_enabled = false
+System.__properties.__spam_accumulator = 0
+System.__properties.__spam_rate = 100
+System.__properties.__spam_threshold = 1.5
+System.__properties.__close_contact = false
+System.__properties.__last_close_contact = 0
+System.__triggerbot = {
+    __enabled = false, __is_parrying = false, __parries = 0,
+    __max_parries = 9999, __parry_delay = 0.5
+}
+
+-- Stub de animacion (Lite ya maneja anim via PF cuando corresponde)
+System.animation = System.animation or {}
+System.animation.play_grab_parry = System.animation.play_grab_parry or function() end
+
+-- Entidad viva mas cercana al jugador (auto spam la necesita)
+local Closest_Entity = nil
+function System.player.get_closest()
+    Closest_Entity = nil
+    if not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return nil end
+    local myPos = LocalPlayer.Character.PrimaryPart.Position
+    local best = math.huge
+    for _, entity in pairs(Alive:GetChildren()) do
+        if entity ~= LocalPlayer.Character and entity:FindFirstChild("HumanoidRootPart") then
+            local d = (entity.HumanoidRootPart.Position - myPos).Magnitude
+            if d < best then best = d Closest_Entity = entity end
+        end
+    end
+    return Closest_Entity
+end
+
+-- Cache de ping para auto spam (se actualiza cada 0.1s en segundo plano)
+getgenv()._ZX_PingCache = getgenv()._ZX_PingCache or 50
+if not getgenv()._ZX_PingUpdater then
+    getgenv()._ZX_PingUpdater = true
+    task.spawn(function()
+        local net = Stats:WaitForChild("Network", 30); if not net then return end
+        local ss = net:WaitForChild("ServerStatsItem", 30); if not ss then return end
+        local dp = ss:WaitForChild("Data Ping", 30); if not dp then return end
+        while true do getgenv()._ZX_PingCache = dp:GetValue() task.wait(0.1) end
+    end)
+end
+
+-- Defaults de configuracion
+-- [Sapphire] valores cargados desde el config guardado
+getgenv().ManualSpamCPSEnabled = Settings.ManualSpamCPSEnabled
+getgenv().ManualSpamCPS = Settings.ManualSpamCPS
+getgenv().ManualSpamNotify = Settings.ManualSpamNotify
+getgenv().ManualSpamAnimationFix = Settings.ManualSpamAnimFix
+getgenv().AutoSpamMode = Settings.AutoSpamMode
+getgenv().AutoSpamNotify = Settings.AutoSpamNotify
+getgenv().AutoSpamAnimationFix = Settings.AutoSpamAnimFix
+getgenv().TriggerbotNotify = Settings.TriggerbotNotify
+System.__properties.__spam_threshold = Settings.ParryThreshold
+System.__properties.__auto_spam_distance_multiplier = Settings.DistanceMultiplier
+
+-- ===== TRIGGERBOT =====
+System.triggerbot = {}
+
+function System.triggerbot.trigger(ball)
+    if System.__triggerbot.__is_parrying or System.__triggerbot.__parries > System.__triggerbot.__max_parries then return end
+    if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart and
+       LocalPlayer.Character.PrimaryPart:FindFirstChild("SingularityCape") then return end
+    System.__triggerbot.__is_parrying = true
+    System.__triggerbot.__parries = System.__triggerbot.__parries + 1
+    System.animation.play_grab_parry()
+    System.parry.execute()
+    task.delay(System.__triggerbot.__parry_delay, function()
+        if System.__triggerbot.__parries > 0 then System.__triggerbot.__parries = System.__triggerbot.__parries - 1 end
+    end)
+    local connection
+    connection = ball:GetAttributeChangedSignal("target"):Once(function()
+        System.__triggerbot.__is_parrying = false
+        if connection then connection:Disconnect() end
+    end)
+    task.spawn(function()
+        local start_time = tick()
+        repeat RunService.Heartbeat:Wait() until (tick() - start_time >= 1 or not System.__triggerbot.__is_parrying)
+        System.__triggerbot.__is_parrying = false
+    end)
+end
+
+function System.triggerbot.loop()
+    if not System.__triggerbot.__enabled then return end
+    if LocalPlayer.Character and LocalPlayer.Character.PrimaryPart and
+       LocalPlayer.Character.PrimaryPart:FindFirstChild("SingularityCape") then return end
+    local balls = workspace:FindFirstChild('Balls')
+    if not balls then return end
+    for _, ball in pairs(balls:GetChildren()) do
+        if ball:IsA('BasePart') and ball:GetAttribute("target") == LocalPlayer.Name then
+            System.triggerbot.trigger(ball)
+            break
+        end
+    end
+end
+
+function System.triggerbot.enable(enabled)
+    System.__triggerbot.__enabled = enabled
+    if enabled then
+        if not System.__properties.__connections.__triggerbot then
+            System.__properties.__connections.__triggerbot = RunService.PreSimulation:Connect(System.triggerbot.loop)
+        end
+    else
+        if System.__properties.__connections.__triggerbot then
+            System.__properties.__connections.__triggerbot:Disconnect()
+            System.__properties.__connections.__triggerbot = nil
+        end
+        System.__triggerbot.__is_parrying = false
+        System.__triggerbot.__parries = 0
+    end
+end
+
+-- ===== MANUAL SPAM =====
+local function get_manual_spam_interval()
+    local cps = math.clamp(getgenv().ManualSpamCPS or 60, 1, 2000)
+    if System.__properties.__is_mobile then cps = math.clamp(cps, 5, 60) end
+    return 1 / cps
+end
+
+System.manual_spam = {}
+
+function System.manual_spam.loop(delta)
+    if not System.__properties.__manual_spam_enabled then return end
+    if not LocalPlayer.Character or LocalPlayer.Character.Parent ~= Alive then return end
+
+    System.__properties.__spam_accumulator = (System.__properties.__spam_accumulator or 0) + delta
+    local interval
+    if getgenv().ManualSpamCPSEnabled then
+        interval = get_manual_spam_interval()
+    else
+        interval = 1 / math.max(1, System.__properties.__spam_rate or 100)
+    end
+    if (System.__properties.__spam_accumulator or 0) < interval then return end
+
+    System.__properties.__spam_accumulator = 0
+    System.parry.execute()
+    if getgenv().ManualSpamAnimationFix and PF then PF() end
+end
+
+function System.manual_spam.start()
+    if System.__properties.__connections.__manual_spam then
+        System.__properties.__connections.__manual_spam:Disconnect()
+    end
+    System.__properties.__manual_spam_enabled = true
+    System.__properties.__connections.__manual_spam = RunService.PreSimulation:Connect(System.manual_spam.loop)
+end
+
+function System.manual_spam.stop()
+    System.__properties.__manual_spam_enabled = false
+    if System.__properties.__connections.__manual_spam then
+        System.__properties.__connections.__manual_spam:Disconnect()
+        System.__properties.__connections.__manual_spam = nil
+    end
+end
+
+-- ===== AUTO SPAM =====
+System.auto_spam = {}
+
+function System.auto_spam:get_entity_properties()
+    System.player.get_closest()
+    if not Closest_Entity or not Closest_Entity.PrimaryPart then return false end
+    if not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return false end
+    local entity_velocity = Closest_Entity.PrimaryPart.Velocity
+    local entity_direction = (LocalPlayer.Character.PrimaryPart.Position - Closest_Entity.PrimaryPart.Position).Unit
+    local entity_distance = (LocalPlayer.Character.PrimaryPart.Position - Closest_Entity.PrimaryPart.Position).Magnitude
+    return { Velocity = entity_velocity, Direction = entity_direction, Distance = entity_distance }
+end
+
+function System.auto_spam:get_ball_properties()
+    local ball = System.ball.get()
+    if not ball then return false end
+    if not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return false end
+    local ball_velocity = ball.AssemblyLinearVelocity or Vector3.new()
+    local ball_direction_vector = LocalPlayer.Character.PrimaryPart.Position - ball.Position
+    local ball_distance = ball_direction_vector.Magnitude
+    local ball_direction = Vector3.new()
+    local ball_dot = 0
+    if ball_distance > 0 then
+        ball_direction = ball_direction_vector.Unit
+        if ball_velocity.Magnitude > 0 then ball_dot = ball_direction:Dot(ball_velocity.Unit) end
+    end
+    return { Velocity = ball_velocity, Direction = ball_direction, Distance = ball_distance, Dot = ball_dot }
+end
+
+function System.auto_spam.spam_service(self)
+    local ball = System.ball.get()
+    local entity = System.player.get_closest()
+    if not ball or not entity or not entity.PrimaryPart then return false end
+    if not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return false end
+    local velocity = ball.AssemblyLinearVelocity or Vector3.new()
+    local speed = velocity.Magnitude
+    if speed == 0 then return 5 end
+    local to_ball = (LocalPlayer.Character.PrimaryPart.Position - ball.Position)
+    if to_ball.Magnitude == 0 then return 5 end
+    local direction = to_ball.Unit
+    local dot = direction:Dot(velocity.Unit)
+    local target_pos = entity.PrimaryPart.Position
+    local target_distance = LocalPlayer:DistanceFromCharacter(target_pos)
+
+    local speed_multiplier = 1
+    local my_hrp = LocalPlayer.Character.PrimaryPart
+    local my_humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    local target_humanoid = entity:FindFirstChildOfClass("Humanoid")
+    local to_target = (target_pos - my_hrp.Position).Unit
+
+    if target_distance <= 3 then System.__properties.__close_contact = true end
+    if System.__properties.__close_contact and target_distance > 3.3 then
+        System.__properties.__close_contact = false
+        System.__properties.__last_close_contact = tick()
+    end
+    local retreated = not System.__properties.__close_contact and (tick() - System.__properties.__last_close_contact) >= 1.5
+
+    if retreated and my_humanoid and my_humanoid.MoveDirection.Magnitude > 0.2 and my_humanoid.MoveDirection:Dot(to_target) < -0.4 then
+        speed_multiplier = 10
+    end
+    if retreated and target_humanoid and target_humanoid.MoveDirection.Magnitude > 0.2 and target_humanoid.MoveDirection:Dot(-to_target) < -0.4 then
+        speed_multiplier = 10
+    end
+
+    local Maximum_Spam_Distance = (self.Ping or 25) + math.min(speed / (speed_multiplier * 1.5), 64)
+    if (self.Entity_Properties and self.Entity_Properties.Distance or math.huge) > Maximum_Spam_Distance then return 5 end
+    if (self.Ball_Properties and self.Ball_Properties.Distance or math.huge) > Maximum_Spam_Distance then return 5 end
+    if target_distance > Maximum_Spam_Distance then return 5 end
+    local retreating_dot = math.clamp(-dot, 0, 1)
+    local retreat_bonus = math.clamp(retreating_dot * (speed / 50), 0, 3.2)
+    return Maximum_Spam_Distance - retreat_bonus
+end
+
+function System.auto_spam.start()
+    if System.__properties.__connections.__auto_spam then
+        System.__properties.__connections.__auto_spam:Disconnect()
+    end
+    System.__properties.__auto_spam_enabled = true
+    System.__properties.__connections.__auto_spam = RunService.PreSimulation:Connect(function(dt)
+        if not dt or dt <= 0 then dt = 0.016 end
+        local ball = System.ball.get()
+        if not ball then return end
+        local zoomies = ball:FindFirstChild("zoomies")
+        if not zoomies then return end
+        System.player.get_closest()
+        local ping = getgenv()._ZX_PingCache
+        local ping_threshold = math.clamp(ping / 10, 1, 16)
+        local ball_target = ball:GetAttribute("target")
+        local ball_properties = System.auto_spam:get_ball_properties()
+        local entity_properties = System.auto_spam:get_entity_properties()
+        if not ball_properties or not entity_properties then return end
+        local spam_accuracy = System.auto_spam.spam_service({
+            Ball_Properties = ball_properties,
+            Entity_Properties = entity_properties,
+            Ping = ping_threshold
+        })
+        if not Closest_Entity or not Closest_Entity.PrimaryPart then return end
+        local target_position = Closest_Entity.PrimaryPart.Position
+        local target_distance = LocalPlayer:DistanceFromCharacter(target_position)
+        if zoomies.VectorVelocity.Magnitude == 0 then return end
+        local direction = (LocalPlayer.Character.PrimaryPart.Position - ball.Position).Unit
+        local ball_direction = zoomies.VectorVelocity.Unit
+        local dot = direction:Dot(ball_direction)
+        local raw_ping_spam = Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+        local ping_seconds_spam = raw_ping_spam / 1000
+        local predictedPosition_spam = ball.Position + (ball.AssemblyLinearVelocity * (dt + ping_seconds_spam))
+        local distance = (LocalPlayer.Character.PrimaryPart.Position - predictedPosition_spam).Magnitude
+        if not ball_target then return end
+        if target_distance > spam_accuracy or distance > spam_accuracy then return end
+        local pulsed = LocalPlayer.Character:GetAttribute('Pulsed')
+        if pulsed then return end
+        if ball_target == LocalPlayer.Name and target_distance > 30 and distance > 30 then return end
+        if distance <= spam_accuracy and System.__properties.__parries > System.__properties.__spam_threshold then
+            if getgenv().AutoSpamMode == "Keypress" then
+                if PF then PF() end
+            else
+                System.parry.execute()
+                if getgenv().AutoSpamAnimationFix and PF then PF() end
+            end
+        end
+    end)
+end
+
+function System.auto_spam.stop()
+    System.__properties.__auto_spam_enabled = false
+    if System.__properties.__connections.__auto_spam then
+        System.__properties.__connections.__auto_spam:Disconnect()
+        System.__properties.__connections.__auto_spam = nil
+    end
+end
+
+-- Aplicar el modo cargado
+getgenv().AutoParryMode = Settings.ParryMode
+
+-- Si estaba activado la Ãºltima vez, se enciende automÃ¡ticamente
+if System.__properties.__autoparry_enabled then
+    System.autoparry.start()
+end
+
+-- [Sapphire] restaurar spam / auto spam / triggerbot si estaban activos
+if Settings.ManualSpam then System.manual_spam.start() end
+if Settings.AutoSpam then System.auto_spam.start() end
+if Settings.Triggerbot then System.triggerbot.enable(true) end
+
+-- // UI ELEMENTS SETUP
+local AutoParryToggle = LeftSection:Toggle({
+    Name = "Auto Parry",
+    Default = Settings.AutoParry, -- Carga el estado guardado
+    Flag = "AutoParry",
+    Tooltip = "Automatically parries the ball",
+    Callback = function(State)
+        System.__properties.__autoparry_enabled = State
+        Settings.AutoParry = State
+        SaveSettings() -- Guarda el cambio inmediatamente
+
+        if State then System.autoparry.start() else System.autoparry.stop() end
+        Arcane:Notification({
+            Name = "Auto Parry",
+            Description = State and "Enabled" or "Disabled",
+            Duration = 3,
+            Icon = "zap",
+            Color = Color3.fromRGB(0, 150, 255)
+        })
+    end
+})
+
+-- Keybind para Auto Parry
+AutoParryToggle:Keybind({
+    Default = Enum.KeyCode.RightShift,
+    Mode = "Toggle",
+    Flag = "AutoParryKey"
+})
+
+LeftSection:Toggle({
+    Name = "Animation Fix",
+    Default = Settings.AnimFix, -- Carga el estado guardado
+    Flag = "AnimFix",
+    Tooltip = "Plays the native parry animation perfectly",
+    Callback = function(State)
+        System.__properties.__animation_fix = State
+        Settings.AnimFix = State
+        SaveSettings() -- Guarda el cambio inmediatamente
+    end
+})
+
+RightSection:Dropdown({
+    Name = "Parry Mode",
+    Items = { "Remote", "Keypress" },
+    Default = Settings.ParryMode, -- Carga el estado guardado
+    Flag = "ParryMode",
+    Callback = function(val)
+        getgenv().AutoParryMode = val
+        Settings.ParryMode = val
+        SaveSettings() -- Guarda el cambio inmediatamente
+    end
+})
+
+RightSection:Dropdown({
+    Name = "Auto Curve Type",
+    Items = System.__config.__curve_names,
+    Default = System.__config.__curve_names[Settings.CurveType], -- Carga el estado guardado
+    Flag = "CurveType",
+    Callback = function(val)
+        for i, name in ipairs(System.__config.__curve_names) do
+            if name == val then
+                System.__properties.__curve_mode = i
+                Settings.CurveType = i
+                SaveSettings() -- Guarda el cambio inmediatamente
+                break
+            end
+        end
+    end
+})
+
+RightSection:Slider({
+    Name = "Parry Accuracy",
+    Min = 1,
+    Max = 100,
+    Default = Settings.ParryAccuracy, -- Carga el estado guardado
+    Suffix = "",
+    Flag = "ParryAccuracy",
+    Tooltip = "Adjust the parry distance accuracy",
+    Callback = function(val)
+        System.__properties.__accuracy = val
+        Settings.ParryAccuracy = val
+        update_divisor()
+        SaveSettings() -- Guarda el cambio inmediatamente
+    end
+})
+
+-- // MANUAL SPAM (Main)  [configs exactas de azure, con auto-guardado]
+local ManualSpamSection = MainSubPage:Section({ Name = "Manual Spam", Side = 1 })
+
+local ManualSpamToggle = ManualSpamSection:Toggle({
+    Name = "Manual Spam",
+    Default = Settings.ManualSpam,
+    Flag = "ManualSpam",
+    Tooltip = "Manually Spams Parry",
+    Callback = function(State)
+        Settings.ManualSpam = State
+        SaveSettings()
+        if State then System.manual_spam.start() else System.manual_spam.stop() end
+        if getgenv().ManualSpamNotify then
+            Arcane:Notification({ Name = "Manual Spam", Description = State and "ON" or "OFF", Duration = 2, Icon = "zap", Color = Color3.fromRGB(0, 150, 255) })
+        end
+    end
+})
+ManualSpamToggle:Keybind({ Default = Enum.KeyCode.Z, Mode = "Toggle", Flag = "ManualSpamKey" })
+
+ManualSpamSection:Toggle({
+    Name = "Enable CPS",
+    Default = Settings.ManualSpamCPSEnabled,
+    Flag = "ManualSpamCPSEnabled",
+    Callback = function(s) getgenv().ManualSpamCPSEnabled = s Settings.ManualSpamCPSEnabled = s SaveSettings() end
+})
+
+ManualSpamSection:Slider({
+    Name = "CPS",
+    Min = 1, Max = 2000,
+    Default = Settings.ManualSpamCPS,
+    Suffix = "",
+    Flag = "ManualSpamCPS",
+    Callback = function(v) getgenv().ManualSpamCPS = v Settings.ManualSpamCPS = v SaveSettings() end
+})
+
+ManualSpamSection:Toggle({
+    Name = "Notify",
+    Default = Settings.ManualSpamNotify,
+    Flag = "ManualSpamNotify",
+    Callback = function(s) getgenv().ManualSpamNotify = s Settings.ManualSpamNotify = s SaveSettings() end
+})
+
+ManualSpamSection:Toggle({
+    Name = "Animation Fix",
+    Default = Settings.ManualSpamAnimFix,
+    Flag = "ManualSpamAnimFix",
+    Callback = function(s) getgenv().ManualSpamAnimationFix = s Settings.ManualSpamAnimFix = s SaveSettings() end
+})
+
+-- // AUTO SPAM (Main)  [configs exactas de azure, con auto-guardado]
+local AutoSpamSection = MainSubPage:Section({ Name = "Auto Spam", Side = 2 })
+
+local AutoSpamToggle = AutoSpamSection:Toggle({
+    Name = "Auto Spam",
+    Default = Settings.AutoSpam,
+    Flag = "AutoSpam",
+    Tooltip = "Automatically spam parries ball",
+    Callback = function(State)
+        Settings.AutoSpam = State
+        SaveSettings()
+        if State then System.auto_spam.start() else System.auto_spam.stop() end
+        if getgenv().AutoSpamNotify then
+            Arcane:Notification({ Name = "Auto Spam", Description = State and "ON" or "OFF", Duration = 2, Icon = "zap", Color = Color3.fromRGB(0, 150, 255) })
+        end
+    end
+})
+AutoSpamToggle:Keybind({ Default = Enum.KeyCode.X, Mode = "Toggle", Flag = "AutoSpamKey" })
+
+AutoSpamSection:Toggle({
+    Name = "Notify",
+    Default = Settings.AutoSpamNotify,
+    Flag = "AutoSpamNotify",
+    Callback = function(s) getgenv().AutoSpamNotify = s Settings.AutoSpamNotify = s SaveSettings() end
+})
+
+AutoSpamSection:Dropdown({
+    Name = "Mode",
+    Items = { "Remote", "Keypress" },
+    Default = Settings.AutoSpamMode,
+    Flag = "AutoSpamMode",
+    Callback = function(v) getgenv().AutoSpamMode = v Settings.AutoSpamMode = v SaveSettings() end
+})
+
+AutoSpamSection:Toggle({
+    Name = "Animation Fix",
+    Default = Settings.AutoSpamAnimFix,
+    Flag = "AutoSpamAnimFix",
+    Callback = function(s) getgenv().AutoSpamAnimationFix = s Settings.AutoSpamAnimFix = s SaveSettings() end
+})
+
+AutoSpamSection:Slider({
+    Name = "Parry Threshold",
+    Min = 1, Max = 3,
+    Default = Settings.ParryThreshold,
+    Suffix = "",
+    Flag = "ParryThreshold",
+    Callback = function(v) System.__properties.__spam_threshold = v Settings.ParryThreshold = v SaveSettings() end
+})
+
+AutoSpamSection:Slider({
+    Name = "Distance Multiplier",
+    Min = 0.3, Max = 3,
+    Default = Settings.DistanceMultiplier,
+    Suffix = "",
+    Flag = "DistanceMultiplier",
+    Callback = function(v) System.__properties.__auto_spam_distance_multiplier = v Settings.DistanceMultiplier = v SaveSettings() end
+})
+
+-- // TRIGGERBOT (Main)  [config exacta de azure, con auto-guardado]
+local TriggerbotSection = MainSubPage:Section({ Name = "Triggerbot", Side = 1 })
+
+local TriggerbotToggle = TriggerbotSection:Toggle({
+    Name = "Triggerbot",
+    Default = Settings.Triggerbot,
+    Flag = "Triggerbot",
+    Tooltip = "Triggerbot Settings",
+    Callback = function(State)
+        Settings.Triggerbot = State
+        SaveSettings()
+        System.triggerbot.enable(State)
+        if getgenv().TriggerbotNotify then
+            Arcane:Notification({ Name = "Triggerbot", Description = State and "ON" or "OFF", Duration = 2, Icon = "zap", Color = Color3.fromRGB(0, 150, 255) })
+        end
+    end
+})
+TriggerbotToggle:Keybind({ Default = Enum.KeyCode.C, Mode = "Toggle", Flag = "TriggerbotKey" })
+
+TriggerbotSection:Toggle({
+    Name = "Notify",
+    Default = Settings.TriggerbotNotify,
+    Flag = "TriggerbotNotify",
+    Callback = function(s) getgenv().TriggerbotNotify = s Settings.TriggerbotNotify = s SaveSettings() end
+})
+
+Arcane:Notification({
+    Name = "Sapphire Private Lite",
+    Description = "Loaded successfully! Settings restored.",
+    Duration = 5,
+    Icon = "check",
+    Color = Color3.fromRGB(0, 255, 150)
+})
